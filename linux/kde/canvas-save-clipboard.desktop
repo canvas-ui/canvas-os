@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Canvas: Save Clipboard as Note
+Comment=Ask for a title, then save the clipboard to Canvas as a note
+Icon=document-send
+Exec=@CANVAS_SEND@ --ask --clipboard
+NoDisplay=true
+Terminal=false
+Categories=Utility;

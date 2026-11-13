@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Canvas: Save Selection as Note
+Comment=Save the highlighted text to Canvas as a note
+Icon=document-send
+Exec=@CANVAS_SEND@ --selection
+NoDisplay=true
+Terminal=false
+Categories=Utility;

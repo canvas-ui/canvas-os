@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Send files, selected text or the clipboard to Canvas through the canvas CLI.
+#
+#   canvas-send FILE...          upload files (Dolphin "Send to Canvas")
+#   canvas-send --selection      save the highlighted text (PRIMARY selection)
+#   canvas-send --clipboard      save the clipboard (Klipper action, Ctrl+C flow)
+#   canvas-send --text -         save stdin
+#   canvas-send --ask ...        ask for a title before saving text
+#
+# Text becomes a note; a single bare URL becomes a tab.
+# Authentication, the server and the workspace come from the canvas CLI
+# (`canvas remote login`). Where items land is set in
+# ~/.config/canvas/kde.conf (see install.sh).
+set -uo pipefail
+
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/canvas/kde.conf"
+CANVAS_BIN=canvas
+CANVAS_SCOPE="ws universe"
+CANVAS_PATH="/inbox"
+# shellcheck source=/dev/null
+[[ -f "$CONF" ]] && . "$CONF"
+
+notify() { # summary body [icon]
+  command -v notify-send >/dev/null 2>&1 &&
+    timeout 5 notify-send -a Canvas -i "${3:-document-send}" "$1" "$2" >/dev/null 2>&1
+  return 0
+}
+
+fail() {
+  notify "Canvas: not saved" "$1" dialog-error
+  printf 'canvas-send: %s\n' "$1" >&2
+  exit 1
+}
+
+command -v "$CANVAS_BIN" >/dev/null 2>&1 ||
+  fail "canvas CLI not found ($CANVAS_BIN). Install it or set CANVAS_BIN in $CONF"
+
+read -r -a scope <<<"$CANVAS_SCOPE"
+dest=()
+# A context scope already is a path; only a workspace scope takes --path.
+[[ "${scope[0]}" == ws* && -n "$CANVAS_PATH" ]] && dest=(--path "$CANVAS_PATH")
+where="$CANVAS_SCOPE${dest:+ $CANVAS_PATH}"
+
+run() { # args... ; stdin passes through
+  local out
+  if ! out=$(NO_COLOR=1 "$CANVAS_BIN" "${scope[@]}" "$@" "${dest[@]}" 2>&1); then
+    fail "$(printf '%s' "$out" | sed 's/\x1b\[[0-9;]*m//g' | grep -v '^[[:space:]]*$' | tail -n 3)"
+  fi
+}
+
+read_selection() {
+  local out
+  if [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-paste >/dev/null 2>&1; then
+    out=$(wl-paste --primary --no-newline 2>/dev/null) && [[ -n "$out" ]] && { printf '%s' "$out"; return; }
+  fi
+  if command -v xclip >/dev/null 2>&1; then
+    out=$(xclip -o -selection primary 2>/dev/null) && [[ -n "$out" ]] && { printf '%s' "$out"; return; }
+  fi
+  return 1
+}
+
+read_clipboard() {
+  local out q
+  for q in qdbus6 qdbus; do
+    command -v "$q" >/dev/null 2>&1 || continue
+    out=$("$q" org.kde.klipper /klipper getClipboardContents 2>/dev/null) && [[ -n "$out" ]] && { printf '%s' "$out"; return; }
+  done
+  if [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-paste >/dev/null 2>&1; then
+    out=$(wl-paste --no-newline 2>/dev/null) && [[ -n "$out" ]] && { printf '%s' "$out"; return; }
+  fi
+  if command -v xclip >/dev/null 2>&1; then
+    out=$(xclip -o -selection clipboard 2>/dev/null) && [[ -n "$out" ]] && { printf '%s' "$out"; return; }
+  fi
+  return 1
+}
+
+save_text() { # text ask
+  local text=$1 ask=$2 title
+  text=$(printf '%s' "$text" | sed -e 's/[[:space:]]*$//')
+  [[ -n "${text//[[:space:]]/}" ]] || fail "Nothing selected"
+
+  if [[ "$text" =~ ^https?://[^[:space:]]+$ ]]; then
+    run tab add - <<<"$text"
+    notify "Saved to Canvas" "Link → $where"
+    return
+  fi
+
+  title=$(printf '%s\n' "$text" | sed -n '/[^[:space:]]/{s/^[[:space:]]*//;p;q}' | cut -c1-80)
+  if [[ "$ask" == 1 ]] && command -v kdialog >/dev/null 2>&1; then
+    title=$(kdialog --title "Save to Canvas" --inputbox "Note title" "$title") || exit 0
+  fi
+  run note add - --title "$title" <<<"$text"
+  notify "Saved to Canvas" "Note \"$title\" → $where"
+}
+
+ask=0
+[[ "${1:-}" == --ask ]] && { ask=1; shift; }
+
+case "${1:-}" in
+  ""|-h|--help)
+    sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+    ;;
+  --selection)
+    text=$(read_selection) || fail "No selection (install wl-clipboard or xclip)"
+    save_text "$text" "$ask"
+    ;;
+  --clipboard)
+    text=$(read_clipboard) || fail "Clipboard is empty"
+    save_text "$text" "$ask"
+    ;;
+  --text)
+    [[ "${2:-}" == - ]] || fail "--text reads stdin: canvas-send --text -"
+    save_text "$(cat)" "$ask"
+    ;;
+  *)
+    for f in "$@"; do [[ -e "$f" ]] || fail "No such file: $f"; done
+    run file add "$@"
+    n=$#; first=$(basename -- "$1")
+    notify "Sent to Canvas" "$([[ $n -gt 1 ]] && echo "$n files" || echo "$first") → $where"
+    ;;
+esac

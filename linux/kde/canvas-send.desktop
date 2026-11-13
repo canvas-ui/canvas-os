@@ -1,0 +1,13 @@
+# KIO service menu: "Send to Canvas" in Dolphin's right-click menu for files
+# and folders. install.sh writes it to ~/.local/share/kio/servicemenus/ with
+# @CANVAS_SEND@ replaced by the absolute path of canvas-send.
+[Desktop Entry]
+Type=Service
+MimeType=all/allfiles;inode/directory;
+Actions=sendToCanvas;
+X-KDE-Priority=TopLevel
+
+[Desktop Action sendToCanvas]
+Name=Send to Canvas
+Icon=document-send
+Exec=@CANVAS_SEND@ %F
